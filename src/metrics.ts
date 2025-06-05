@@ -277,7 +277,7 @@ export const MetricsDefaults: Record<string, any> = {
     textYOffset: 2,
     bracketPadding: 5,
     suffix: {
-      fontScale: 1 / 2,
+      fontScale: 3 / 4,
       extraSpacing: 1,
       suffixOffsetY: -3,
     },

@@ -48,6 +48,7 @@
  * }
  */
 
+// import { BoundingBox } from './boundingbox';
 import { Element } from './element';
 import { Formatter } from './formatter';
 import { Glyphs } from './glyphs';
@@ -226,25 +227,46 @@ export class Tuplet extends Element {
   // determine how many tuplets are nested within this tuplet
   // on the same side (above/below), to calculate a y
   // offset for this tuplet:
+  // getNestedTupletCount(): number {
+  //   const { location } = this.options;
+  //   const firstNote = this.notes[0];
+  //   let maxTupletCount = countTuplets(firstNote, location);
+  //   let minTupletCount = countTuplets(firstNote, location);
+
+  //   // Count the tuplets that are on the same side (above/below)
+  //   // as this tuplet:
+  //   function countTuplets(note: Note, location: number) {
+  //     return note.getTupletStack().filter((tuplet) => tuplet.options.location === location).length;
+  //   }
+
+  //   this.notes.forEach((note) => {
+  //     const tupletCount = countTuplets(note, location);
+  //     maxTupletCount = tupletCount > maxTupletCount ? tupletCount : maxTupletCount;
+  //     minTupletCount = tupletCount < minTupletCount ? tupletCount : minTupletCount;
+  //   });
+
+  //   return maxTupletCount - minTupletCount;
+  // }
+
   getNestedTupletCount(): number {
     const { location } = this.options;
-    const firstNote = this.notes[0];
-    let maxTupletCount = countTuplets(firstNote, location);
-    let minTupletCount = countTuplets(firstNote, location);
 
-    // Count the tuplets that are on the same side (above/below)
-    // as this tuplet:
-    function countTuplets(note: Note, location: number) {
-      return note.getTupletStack().filter((tuplet) => tuplet.options.location === location).length;
+    let maxOffset = 0;
+    for (const note of this.notes) {
+      // Find the array of tuplets that note belongs to
+      const stack = note
+        .getTupletStack()
+        // Count the tuplets that are on the same side (above/below) as this tuplet.
+        .filter((tuplet) => tuplet.options.location === location);
+
+      // Find where “this” appears in that filtered stack
+      const index = stack.indexOf(this);
+      if (index >= 0 && index > maxOffset) {
+        maxOffset = index;
+      }
     }
 
-    this.notes.forEach((note) => {
-      const tupletCount = countTuplets(note, location);
-      maxTupletCount = tupletCount > maxTupletCount ? tupletCount : maxTupletCount;
-      minTupletCount = tupletCount < minTupletCount ? tupletCount : minTupletCount;
-    });
-
-    return maxTupletCount - minTupletCount;
+    return maxOffset;
   }
 
   // determine the y position of the tuplet:
@@ -310,6 +332,42 @@ export class Tuplet extends Element {
     return yPosition + nestedTupletYOffset + yOffset;
   }
 
+  override setFontSize(size?: string | number): this {
+    // 1) If size is a string like "12pt" or "14px", extract its numeric part in points.
+    //    We’ll assume that:
+    //      - If someone passes a bare number, that number is already “points”.
+    //      - If they pass a string, it’s in the form “12pt” (or “14px”), so we strip non‐digits.
+    let basePointSize: number;
+    if (typeof size === 'number') {
+      basePointSize = size;
+    } else if (typeof size === 'string') {
+      // Remove any non‐digit/‐dot characters, then parse
+      // (e.g. "12pt" → "12", "14px" → "14", "10.5pt" → "10.5")
+      const numericPortion = size.replace(/[^0-9.]/g, '');
+      basePointSize = parseFloat(numericPortion);
+      if (Number.isNaN(basePointSize)) {
+        // Fallback to default if parsing fails
+        basePointSize = Metrics.getFontInfo('Tuplet').size as number;
+      }
+    } else {
+      // No size provided → fall back to whatever the default from metrics is
+      basePointSize = Metrics.getFontInfo('Tuplet').size as number;
+    }
+
+    // 2) Set the main “3:4” text to basePointSize:
+    this.textElement.setFontSize(basePointSize);
+
+    // 3) Compute the suffix size (e.g. 0.75 × basePointSize)
+    const suffixScale = Metrics.get('Tuplet.suffix.fontScale') as number;
+    // (e.g. 0.75)
+    const suffixPointSize = suffixScale * basePointSize;
+
+    // 4) Finally set suffixElement’s size in points:
+    this.suffixElement.setFontSize(suffixPointSize);
+
+    return this;
+  }
+
   override draw(): void {
     const { location, bracketed, textYOffset, suffix } = this.options;
     const bracketPadding = Metrics.get('Tuplet.bracketPadding');
@@ -333,6 +391,12 @@ export class Tuplet extends Element {
 
     // determine y value for tuplet
     yPos = this.getYPosition();
+
+    // publish bounds so drawPointerRect() will work
+    this.setX(xPos);
+    this.setY(yPos - this.textElement.getHeight() / 2);
+    this.setWidth(this.width);
+    this.height = this.textElement.getHeight() + 1;
 
     // calculate width taken by all text elements
     const ratioWidth = this.textElement.getWidth();
@@ -383,4 +447,39 @@ export class Tuplet extends Element {
     ctx.closeGroup();
     this.setRendered();
   }
+
+  // override getBoundingBox(): BoundingBox {
+
+  //   // 2) Vertical extent:
+  //   //    We know this.y sits at the baseline of our ratio text.
+  //   //    textElement.getHeight() gives roughly "total text height."
+  //   //    If the ratio lives above the stave, top = y − (textHeight/2),
+  //   //    bottom = y + (textHeight/2). The suffix might sit  a bit lower, so include its height too.
+  //   const textH = this.textElement.getHeight();
+  //   const suffixH = this.options.suffix ? this.suffixElement.getHeight() : 0;
+
+  //   // 3) If the tuplet is drawn above the notes (location=+1),
+  //   //    the text is rendered at commonTextY = yPos − (textH/2) (roughly).
+  //   //    But since we stored this.y = yPos in draw(),
+  //   //    the topmost pixel is y − (textH/2), and the bottommost pixel is y + (textH/2) + suffixOffset.
+  //   //    We already set `this.height = textH + 1` in draw(),
+  //   //    but we also need to extend the box downward if there’s a suffix that sits below text.
+
+  //   const halfText = textH / 2;
+  //   let top, bottom;
+
+  //   if (this.options.location === Tuplet.LOCATION_TOP) {
+  //     top = this.y - halfText;
+  //     bottom = this.y + halfText + (this.options.suffix ? suffixH : 0);
+  //   } else {
+  //     // If the tuplet is below the staff, it’s symmetric:
+  //     top = this.y - halfText - (this.options.suffix ? suffixH : 0);
+  //     bottom = this.y + halfText;
+  //   }
+
+  //   // Build width/height from those edges:
+  //   const height = bottom - top;
+
+  //   return new BoundingBox(this.x, top, this.width, height);
+  // }
 }
