@@ -48,7 +48,7 @@
  * }
  */
 
-// import { BoundingBox } from './boundingbox';
+import { BoundingBox } from './boundingbox';
 import { Element } from './element';
 import { Formatter } from './formatter';
 import { Glyphs } from './glyphs';
@@ -370,7 +370,10 @@ export class Tuplet extends Element {
 
   override draw(): void {
     const { location, bracketed, textYOffset, suffix } = this.options;
-    const bracketPadding = Metrics.get('Tuplet.bracketPadding');
+
+    const bracketPadding = Metrics.get('Tuplet.bracket.padding');
+    const bracketThickness = Metrics.get('Tuplet.bracket.lineWidth');
+    const bracketLegLength = Metrics.get('Tuplet.bracket.legLength');
     const extraSpacing = Metrics.get('Tuplet.suffix.extraSpacing');
     const suffixOffsetY = Metrics.get('Tuplet.suffix.suffixOffsetY');
 
@@ -381,22 +384,26 @@ export class Tuplet extends Element {
     // determine x value of left bound of tuplet
     const firstNote = this.notes[0] as StemmableNote;
     const lastNote = this.notes[this.notes.length - 1] as StemmableNote;
+    let bodyWidth = 0;
     if (!bracketed) {
       xPos = firstNote.getStemX();
-      this.width = lastNote.getStemX() - xPos;
+      bodyWidth = lastNote.getStemX() - xPos;
+      this.setWidth(bodyWidth);
     } else {
       xPos = firstNote.getTieLeftX() - bracketPadding;
-      this.width = lastNote.getTieRightX() - xPos + bracketPadding;
+      bodyWidth = lastNote.getTieRightX() - xPos + bracketPadding;
+      // value added to fully include right bracket leg in bounding box
+      this.setWidth(bodyWidth + bracketThickness);
     }
+
+    this.setX(xPos);
 
     // determine y value for tuplet
     yPos = this.getYPosition();
 
-    // publish bounds so drawPointerRect() will work
-    this.setX(xPos);
-    this.setY(yPos - this.textElement.getHeight() / 2);
-    this.setWidth(this.width);
-    this.height = this.textElement.getHeight() + 1;
+    // set y and height for bounding box calculations
+    this.setY(location === TupletLocation.TOP ? yPos : yPos - bracketLegLength + bracketThickness);
+    this.height = bracketLegLength;
 
     // calculate width taken by all text elements
     const ratioWidth = this.textElement.getWidth();
@@ -408,7 +415,7 @@ export class Tuplet extends Element {
     }
 
     // find center of notation for text placement
-    const notationCenterX = xPos + this.width / 2;
+    const notationCenterX = xPos + bodyWidth / 2;
     const notationStartX = notationCenterX - totalTextWidth / 2;
 
     // Compute a common vertical coordinate for text rendering.
@@ -421,25 +428,31 @@ export class Tuplet extends Element {
 
     // draw bracket if the tuplet is not beamed
     if (bracketed) {
-      const lineWidth = this.width / 2 - totalTextWidth / 2 - bracketPadding;
+      const lineWidth = bodyWidth / 2 - totalTextWidth / 2 - bracketPadding;
       const isTupletBottom = location === Tuplet.LOCATION_BOTTOM;
 
       if (lineWidth > 0) {
-        ctx.fillRect(xPos, yPos, lineWidth, 1);
-        ctx.fillRect(xPos + this.width / 2 + totalTextWidth / 2 + bracketPadding, yPos, lineWidth, 1);
-        ctx.fillRect(xPos, yPos + (isTupletBottom ? 1 : 0), 1, location * 10);
-        ctx.fillRect(xPos + this.width, yPos + (isTupletBottom ? 1 : 0), 1, location * 10);
+        ctx.fillRect(xPos, yPos, lineWidth, bracketThickness);
+        ctx.fillRect(xPos + bodyWidth / 2 + totalTextWidth / 2 + bracketPadding, yPos, lineWidth, bracketThickness);
+        ctx.fillRect(xPos, yPos + (isTupletBottom ? 1 : 0), bracketThickness, location * bracketLegLength);
+        ctx.fillRect(xPos + bodyWidth, yPos + (isTupletBottom ? 1 : 0), bracketThickness, location * bracketLegLength);
       }
     }
 
     // draw ratio text (x:y)
     let currentX = notationStartX;
     this.textElement.renderText(ctx, currentX, commonTextY);
+    // set text element proper x and y
+    this.textElement.setX(currentX);
+    this.textElement.setY(commonTextY);
     currentX += ratioWidth + extraSpacing;
 
     // draw note glyph if wanted
     if (suffix) {
-      this.suffixElement.renderText(ctx, currentX, commonTextY + suffixOffsetY);
+      const suffixY = commonTextY + suffixOffsetY;
+      this.suffixElement.renderText(ctx, currentX, suffixY);
+      this.suffixElement.setX(currentX);
+      this.suffixElement.setY(suffixY);
       currentX += noteWidth;
     }
 
@@ -448,38 +461,20 @@ export class Tuplet extends Element {
     this.setRendered();
   }
 
-  // override getBoundingBox(): BoundingBox {
+  override getBoundingBox(): BoundingBox {
+    const { bracketed, suffix } = this.options;
 
-  //   // 2) Vertical extent:
-  //   //    We know this.y sits at the baseline of our ratio text.
-  //   //    textElement.getHeight() gives roughly "total text height."
-  //   //    If the ratio lives above the stave, top = y − (textHeight/2),
-  //   //    bottom = y + (textHeight/2). The suffix might sit  a bit lower, so include its height too.
-  //   const textH = this.textElement.getHeight();
-  //   const suffixH = this.options.suffix ? this.suffixElement.getHeight() : 0;
+    const ratioBounding = this.textElement.getBoundingBox();
+    const suffixBounding = this.suffixElement.getBoundingBox();
 
-  //   // 3) If the tuplet is drawn above the notes (location=+1),
-  //   //    the text is rendered at commonTextY = yPos − (textH/2) (roughly).
-  //   //    But since we stored this.y = yPos in draw(),
-  //   //    the topmost pixel is y − (textH/2), and the bottommost pixel is y + (textH/2) + suffixOffset.
-  //   //    We already set `this.height = textH + 1` in draw(),
-  //   //    but we also need to extend the box downward if there’s a suffix that sits below text.
+    const mergedText = suffix ? ratioBounding.mergeWith(suffixBounding) : ratioBounding;
 
-  //   const halfText = textH / 2;
-  //   let top, bottom;
+    if (!bracketed) {
+      return mergedText;
+    }
 
-  //   if (this.options.location === Tuplet.LOCATION_TOP) {
-  //     top = this.y - halfText;
-  //     bottom = this.y + halfText + (this.options.suffix ? suffixH : 0);
-  //   } else {
-  //     // If the tuplet is below the staff, it’s symmetric:
-  //     top = this.y - halfText - (this.options.suffix ? suffixH : 0);
-  //     bottom = this.y + halfText;
-  //   }
+    const bracketBounding = new BoundingBox(this.x, this.y, this.width, this.height);
 
-  //   // Build width/height from those edges:
-  //   const height = bottom - top;
-
-  //   return new BoundingBox(this.x, top, this.width, height);
-  // }
+    return bracketBounding.mergeWith(mergedText);
+  }
 }
