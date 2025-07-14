@@ -124,7 +124,8 @@
     "generate:current": "grunt generate:current",
     "generate:reference": "grunt generate:reference",
     "diff:reference": "grunt diff:reference",
-    "lint": "grunt eslint"
+    "lint": "grunt eslint",
+    "prepare": "grunt"
   },
   "homepage": "https://vexflow.com/",
   "keywords": [
