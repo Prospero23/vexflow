@@ -93,7 +93,7 @@ export class Tuplet extends Element {
     return TupletLocation.BOTTOM;
   }
   static get NESTING_OFFSET(): number {
-    return 15;
+    return 20;
   }
 
   constructor(notes: Note[], options: TupletOptions = {}) {
